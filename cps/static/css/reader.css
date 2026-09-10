@@ -1,49 +1,264 @@
 .fontSizeWrapper {
   position: relative;
 }
-.slider {
-  position: absolute;
-  top: 50%;
-  transform: translate(0, -50%);
-  width: 90%;
-  height: 60px;
-  background: transparent;
-  border-radius: 20px;
-  display: flex;
-  align-items: center;
-  box-shadow: 0px 15px 40px #7e6d5766;
-}
-.slider label {
-  font-size: 20px;
-  font-weight: 400;
-  font-family: Open Sans;
-  padding-right: 10px;
-  color: white;
-}
-.slider input[type="range"] {
-  width: 80%;
-  height: 5px;
-  background: black;
-  border: none;
-  outline: none;
+
+/* ---- Settings modal (#settings-modal) ----
+   These rules override main.css's generic .modal/.md-content shell. Since
+   reader.css is only loaded by read.html (never by the Comic reader's
+   readcbr.html, which shares the same class names in main.css), this is
+   safe: it restyles the shell for the EPUB reader only. */
+
+:root {
+  --settings-gap-sm: 6px;
+  --settings-gap-md: 12px;
+  --settings-gap-lg: 24px;
+  --settings-accent: #5b9dff;
+  --settings-radius: 14px;
+  --settings-radius-sm: 8px;
+  --settings-surface: #202225;
+  --settings-border: rgba(255, 255, 255, 0.08);
+  --settings-text: #eef0f2;
+  --settings-text-muted: rgba(255, 255, 255, 0.55);
+  --settings-control-bg: rgba(255, 255, 255, 0.06);
+  --settings-control-bg-hover: rgba(255, 255, 255, 0.14);
+  --settings-control-border: rgba(255, 255, 255, 0.12);
 }
 
-.item {
-  font-size: 14px;
+.md-content {
+  background: var(--settings-surface);
+  border-radius: var(--settings-radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  padding: 4px 24px 24px;
+  overflow-y: auto;
+  max-height: 100%;
+}
+
+.md-content h3 {
+  background: none;
+  border-bottom: 1px solid var(--settings-border);
+  padding: 14px 4px 16px;
+  margin: 0 -24px 20px;
+  padding-left: 24px;
+  padding-right: 24px;
   font-weight: 600;
-  font-family: Open Sans;
-  padding-right: 10px;
-  color: white;
+  font-size: 19px;
+  color: var(--settings-text);
+  opacity: 1;
 }
 
-.item ~ button {
-  display: inline-block;
-  border: none;
+.md-content > .closer {
+  color: var(--settings-text-muted);
+  width: 32px;
+  height: 32px;
+  line-height: 32px;
+  text-align: center;
+  border-radius: 50%;
+  right: 12px;
+  top: 12px;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.md-content > .closer:hover {
+  background: var(--settings-control-bg-hover);
+  color: var(--settings-text);
+}
+
+.settings-section {
+  margin-bottom: var(--settings-gap-lg);
+  padding-bottom: var(--settings-gap-lg);
+  border-bottom: 1px solid var(--settings-border);
+}
+
+.settings-section:last-of-type {
+  margin-bottom: 4px;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.settings-section__title {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: "Open Sans", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--settings-text-muted);
+  margin: 0 0 var(--settings-gap-md) 0;
+}
+
+.settings-section__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--settings-gap-sm);
+}
+
+.settings-button-group button {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--settings-control-border);
+  background: var(--settings-control-bg);
+  color: var(--settings-text);
   text-align: center;
   text-decoration: none;
-  margin-top: 5%;
-  margin-right: 1%;
-  font-size: 16px;
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: var(--settings-radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.settings-button-group button:hover {
+  background: var(--settings-control-bg-hover);
+}
+
+/* Theme swatches keep their own background color as their identity, so the
+   selected state is a halo ring (works over any swatch color) rather than a
+   background fill; plain font/layout buttons get a filled accent instead. */
+.settings-button-group button[aria-pressed="true"] {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--settings-surface), 0 0 0 4px var(--settings-accent);
+}
+
+#font button[aria-pressed="true"],
+#layout button[aria-pressed="true"] {
+  background: var(--settings-accent);
+  border-color: var(--settings-accent);
+  color: #fff;
+  box-shadow: none;
+}
+
+.settings-button-group button .tick {
+  margin-right: 2px;
+}
+
+.settings-button-group button:disabled,
+.settings-stepper button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--settings-gap-sm);
+}
+
+#forceFontRow {
+  margin-top: 16px;
+}
+
+.settings-checkbox-row input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--settings-accent);
+  cursor: pointer;
+}
+
+.settings-checkbox-row label {
+  cursor: pointer;
+  color: var(--settings-text);
+  font-size: 14px;
+}
+
+.settings-checkbox-row input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.settings-checkbox-row input[type="checkbox"]:disabled + label {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.settings-hint {
+  margin: var(--settings-gap-sm) 0 0;
+  font-size: 12px;
+  color: var(--settings-text-muted);
+}
+
+.settings-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--settings-gap-md);
+}
+
+.settings-stepper button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  border: 1px solid var(--settings-control-border);
+  background: var(--settings-control-bg);
+  color: var(--settings-text);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.settings-stepper button:hover:not(:disabled) {
+  background: var(--settings-control-bg-hover);
+}
+
+#fontSizeDisplay {
+  min-width: 52px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--settings-text);
+}
+
+.settings-custom-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 4px;
+  padding-left: var(--settings-gap-md);
+  border-left: 1px solid var(--settings-border);
+  color: var(--settings-text-muted);
+  font-size: 14px;
+}
+
+.settings-swatch {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--settings-control-border);
+  border-radius: var(--settings-radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.settings-swatch:hover {
+  border-color: var(--settings-accent);
+  transform: scale(1.05);
+}
+
+.settings-swatch:focus-visible,
+.settings-button-group button:focus-visible,
+.settings-stepper button:focus-visible,
+#setting:focus-visible,
+.closer:focus-visible {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 2px;
+}
+
+/* Pickr (custom color picker) dark-skin override, scoped to the single
+   instance this modal creates - matches the modal's dark chrome instead of
+   Pickr's default light popup skin. */
+.pcr-app {
+  background: var(--settings-surface);
+  border-radius: var(--settings-radius-sm);
+  box-shadow: 0 0.15em 1.5em 0 rgba(0, 0, 0, 0.4), 0 0 1em 0 rgba(0, 0, 0, 0.2);
+}
+
+.pcr-app .pcr-interaction .pcr-result {
+  color: var(--settings-text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pcr-app .pcr-type.active {
+  background: var(--settings-accent);
 }
 
 #main,
