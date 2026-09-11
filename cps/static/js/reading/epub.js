@@ -1,4 +1,4 @@
-/* global $, calibre, EPUBJS, ePubReader */
+/* global $, calibre, EPUBJS, ePubReader, ReaderSpacing, ReaderPreferences, ReaderSettings */
 
 var reader;
 
@@ -9,13 +9,18 @@ var reader;
     EPUBJS.cssPath = calibre.cssPath;
 
     reader = ePubReader(calibre.bookUrl, {
-        restore: true,
+        restore: !ReaderPreferences.failed(),
         bookmarks: calibre.bookmark ? [calibre.bookmark] : [],
     });
+
+    ReaderPreferences.attach(reader);
 
     Object.keys(themes).forEach(function (theme) {
         reader.rendition.themes.register(theme, themes[theme].css_path);
     });
+
+    ReaderSettings.attach();
+    ReaderSpacing.init();
 
     if (calibre.useBookmarks) {
         reader.on("reader:bookmarked", updateBookmark.bind(reader, "add"));
@@ -23,6 +28,31 @@ var reader;
     } else {
         $("#bookmark, #show-Bookmarks").remove();
     }
+
+    // Handle both the reader shell and keyboard events forwarded from chapters.
+    function pageKeys(event) {
+        var next = event.key === "PageDown" || event.keyCode === 34;
+        var previous = event.key === "PageUp" || event.keyCode === 33;
+        if ((!next && !previous) || event.defaultPrevented || event.isComposing ||
+            event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+
+        var target = event.target;
+        var settings = document.getElementById("settings-modal");
+        if ((settings && settings.classList.contains("md-show")) ||
+            (target && (target.isContentEditable || (target.closest &&
+                target.closest("input, textarea, select, button, [role='textbox'], #sidebar"))))) return;
+
+        // Suppress native scrolling and held-key repeat; one press turns one page.
+        event.preventDefault();
+        if (event.repeat) return;
+        if (next) {
+            reader.rendition.next();
+        } else {
+            reader.rendition.prev();
+        }
+    }
+    document.addEventListener("keydown", pageKeys);
+    reader.rendition.on("keydown", pageKeys);
 
     // Enable swipe support
     // I have no idea why swiperRight/swiperLeft from plugins is not working, events just don't get fired
@@ -56,21 +86,11 @@ var reader;
     let progressDiv = document.getElementById("progress");
     // Pages counter (virtual pages via EPUB locations)
     let pagesDiv = document.getElementById("pages-count");
-    // Honor saved visibility preference for pages counter
-    (function () {
-        try {
-            var pref = localStorage.getItem("calibre.reader.showPages");
-            var show = pref === null ? true : pref === "true";
-            if (pagesDiv)
-                pagesDiv.style.visibility = show ? "visible" : "hidden";
-        } catch (e) {}
-    })();
-
     reader.book.ready.then(() => {
         let locations_key = reader.book.key() + "-locations";
         // Key to persist last-read position for this book in localStorage
         let position_key = "calibre.reader.position." + reader.book.key();
-        let stored_locations = localStorage.getItem(locations_key);
+        let stored_locations = ReaderPreferences.storage.getItem(locations_key);
         let make_locations, save_locations;
         if (stored_locations) {
             make_locations = Promise.resolve(
@@ -81,7 +101,7 @@ var reader;
         } else {
             make_locations = reader.book.locations.generate();
             save_locations = () => {
-                localStorage.setItem(
+                ReaderPreferences.storage.setItem(
                     locations_key,
                     reader.book.locations.save()
                 );
@@ -91,7 +111,7 @@ var reader;
             .then(() => {
                 // Try to restore last position (CFI) from localStorage if present
                 try {
-                    var _savedPos = localStorage.getItem(position_key);
+                    var _savedPos = ReaderPreferences.storage.getItem(position_key);
                     if (_savedPos) {
                         try {
                             var _posObj = JSON.parse(_savedPos);
@@ -118,6 +138,7 @@ var reader;
                     if (total > 0) {
                         pagesDiv.textContent = current + "/" + total;
                         pagesDiv.style.visibility = "visible";
+                        pagesDiv.style.display = ReaderPreferences.get().showPages ? "" : "none";
                     } else {
                         pagesDiv.textContent = "";
                         pagesDiv.style.visibility = "hidden";
@@ -129,7 +150,7 @@ var reader;
                             cfi: location.start.cfi,
                             percentage: location.start.percentage,
                         };
-                        localStorage.setItem(
+                        ReaderPreferences.storage.setItem(
                             position_key,
                             JSON.stringify(posObj)
                         );
@@ -171,20 +192,4 @@ var reader;
         });
     }
 
-    // Default settings load
-    const theme = localStorage.getItem("calibre.reader.theme") ?? "lightTheme";
-    selectTheme(theme);
-
-    // Restore saved font and font size after reader is ready
-    reader.book.ready.then(() => {
-        const savedFontSize = localStorage.getItem("calibre.reader.fontSize");
-        if (savedFontSize) {
-            reader.rendition.themes.fontSize(`${savedFontSize}%`);
-        }
-
-        const savedFont = localStorage.getItem("calibre.reader.font");
-        if (savedFont && window.selectFont) {
-            window.selectFont(savedFont);
-        }
-    });
 })();
