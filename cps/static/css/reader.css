@@ -326,6 +326,7 @@
 .spacing-control .settings-stepper span {
   min-width: 4.5em;
   text-align: center;
+  color: var(--settings-text);
 }
 .spacing-control .settings-stepper .spacing-reset {
   width: auto;
