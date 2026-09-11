@@ -13,6 +13,7 @@
   --settings-gap-md: 12px;
   --settings-gap-lg: 24px;
   --settings-accent: #5b9dff;
+  --settings-accent-text: #5b9dff;
   --settings-radius: 14px;
   --settings-radius-sm: 8px;
   --settings-surface: #202225;
@@ -22,12 +23,29 @@
   --settings-control-bg: rgba(255, 255, 255, 0.06);
   --settings-control-bg-hover: rgba(255, 255, 255, 0.14);
   --settings-control-border: rgba(255, 255, 255, 0.12);
+  --settings-shadow-rim: rgba(255, 255, 255, 0.06);
+}
+
+/* Light-reading-theme variant: switched at runtime via #settings-modal's
+   data-scheme attribute (see reader_settings.js's schemeFor()), so the
+   panel's own chrome matches whichever reading theme is active instead of
+   always being dark regardless of it. */
+#settings-modal[data-scheme="light"] {
+  --settings-surface: #ffffff;
+  --settings-border: rgba(0, 0, 0, 0.08);
+  --settings-text: #1b1c1f;
+  --settings-text-muted: rgba(0, 0, 0, 0.55);
+  --settings-control-bg: rgba(0, 0, 0, 0.05);
+  --settings-control-bg-hover: rgba(0, 0, 0, 0.08);
+  --settings-control-border: rgba(0, 0, 0, 0.12);
+  --settings-shadow-rim: rgba(0, 0, 0, 0.06);
+  --settings-accent-text: #1f5fd1;
 }
 
 .md-content {
   background: var(--settings-surface);
   border-radius: var(--settings-radius);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--settings-shadow-rim);
   padding: 4px 24px 24px;
   overflow-y: auto;
   max-height: 100%;
@@ -254,7 +272,7 @@
 
 .pcr-app .pcr-interaction .pcr-result {
   color: var(--settings-text);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--settings-control-bg);
 }
 
 .pcr-app .pcr-type.active {
@@ -362,7 +380,7 @@
 }
 #settings-modal .settings-tabs button[aria-selected="true"] {
   border-color: var(--settings-accent);
-  color: var(--settings-accent);
+  color: var(--settings-accent-text);
 }
 #settings-modal .settings-panels {
   flex: 1 1 auto;

@@ -106,6 +106,15 @@ var ReaderSettings = (function () {
         var luminance = (0.2126 * rgb[0]) + (0.7152 * rgb[1]) + (0.0722 * rgb[2]);
         return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#ffffff";
     }
+    // Built-in themes store title-color as short hex ("#fff"); contrast()
+    // returns long hex ("#ffffff") for custom colors - match both forms so a
+    // dark custom background isn't misread as a light one.
+    function schemeFor(state) {
+        var titleColor = state.theme === "customTheme"
+            ? contrast(state.customTheme)
+            : (window.themes[state.theme] || window.themes.lightTheme)["title-color"];
+        return /^#(fff|ffffff)$/i.test(titleColor) ? "dark" : "light";
+    }
     function applyTheme(state) {
         var config = window.themes[state.theme];
         if (state.theme === "customTheme") {
@@ -127,6 +136,7 @@ var ReaderSettings = (function () {
         if (reader.rendition.location) reader.rendition.resize();
     }
     function render(state) {
+        modal.dataset.scheme = schemeFor(state);
         document.getElementById("readerSettingsStatus").textContent = "";
         mark("font", state.font);
         mark("themes", state.theme);
