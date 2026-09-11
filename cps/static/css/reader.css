@@ -313,6 +313,7 @@
   width: auto;
   padding: 0 10px;
   font-size: 12px;
+  border-radius: 18px;
 }
 
 /* Fixed chrome with only the active tab panel scrolling. */
