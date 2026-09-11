@@ -1,503 +1,211 @@
-/* global $, reader, Pickr */
-
-// Behavior for the EPUB reader's "Settings" modal (#settings-modal): theme
-// selection, custom color picker, font size, font family, spread/layout,
-// the pages-count toggle, and Escape/focus handling for the modal itself.
-//
-// window.calibre and window.themes are defined by an inline <script> in
-// read.html (they need Jinja-templated url_for()/csrf values); everything
-// here is pure behavior and reads those globals at call time.
+/* global reader, Pickr, ReaderPreferences */
+/* exported selectTheme, selectFont, spread, ReaderSettings */
 
 function selectTheme(id) {
-    var themesContainer = document.getElementById("themes");
-    var buttons = themesContainer.querySelectorAll("button[aria-pressed]");
-    buttons.forEach(function (btn) {
-        btn.setAttribute("aria-pressed", "false");
-    });
-
-    // Scoped to .tick (not "span") because #customThemeWrapper is itself a
-    // <span> containing #customThemeSwatch - a bare "span" selector would
-    // also match it and wipe out the swatch via textContent = "".
-    var tickSpans = themesContainer.querySelectorAll(".tick");
-    tickSpans.forEach(function (tickSpan) {
-        try {
-            tickSpan.textContent = "";
-        } catch (e) {}
-    });
-
-    // If the theme button exists, set its inner span to a tick. Otherwise set any span with the matching id.
-    var el = document.getElementById(id);
-    if (el) {
-        el.setAttribute("aria-pressed", "true");
-        var sp = el.querySelector("span");
-        if (sp) sp.textContent = "✓";
-    } else {
-        var spById = document.getElementById(id + "Selected") || document.getElementById("customSelected");
-        if (spById) spById.textContent = "✓";
-    }
-
-    // Saving theme to local storage
-    localStorage.setItem("calibre.reader.theme", id);
-
-    var themeConfig = window.themes && window.themes[id];
-    if (!themeConfig) {
-        // Unknown/stale theme id (e.g. leftover localStorage value) - nothing more we can apply safely.
-        return;
-    }
-
-    // If selecting custom theme, ensure epubjs theme is registered with chosen bg color
-    if (id === "customTheme") {
-        var customColor = themeConfig.bgColor || "#ffffff";
-        try {
-            if (reader && reader.rendition && reader.rendition.themes) {
-                reader.rendition.themes.register("customTheme", {
-                    body: {
-                        background: customColor,
-                    },
-                });
-                reader.rendition.themes.select("customTheme");
-            }
-        } catch (e) {
-            console.error("Failed to register/select customTheme", e);
-        }
-    } else {
-        // Apply theme to epubjs iframe
-        try {
-            reader.rendition.themes.select(id);
-        } catch (e) {}
-    }
-
-    // Apply theme to rest of the page.
-    document.getElementById("main").style.backgroundColor = themeConfig.bgColor;
-    document.getElementById("titlebar").style.color = themeConfig["title-color"] || "#fff";
-    document.getElementById("progress").style.color = themeConfig["title-color"] || "#fff";
+    ReaderPreferences.set({theme: id});
 }
-
-// font size settings logic
-var currentFontSize = 100; // default 100%
-var minFontSize = 50;
-var maxFontSize = 300;
-var stepSize = 5;
-
-var fontSizeDisplay = document.getElementById("fontSizeDisplay");
-var fontSizeDecrease = document.getElementById("fontSizeDecrease");
-var fontSizeIncrease = document.getElementById("fontSizeIncrease");
-
-function updateFontSizeButtonsState() {
-    fontSizeDecrease.disabled = currentFontSize <= minFontSize;
-    fontSizeIncrease.disabled = currentFontSize >= maxFontSize;
+function selectFont(id) {
+    ReaderPreferences.set({font: id});
 }
-
-function updateFontSize(newSize) {
-    if (newSize < minFontSize) newSize = minFontSize;
-    if (newSize > maxFontSize) newSize = maxFontSize;
-
-    currentFontSize = newSize;
-    fontSizeDisplay.textContent = newSize + "%";
-    localStorage.setItem("calibre.reader.fontSize", newSize);
-    if (reader && reader.rendition) {
-        reader.rendition.themes.fontSize(`${newSize}%`);
-    }
-    updateFontSizeButtonsState();
-}
-
-// Restore saved font size on load
-var savedFontSize = localStorage.getItem("calibre.reader.fontSize");
-if (savedFontSize) {
-    currentFontSize = parseInt(savedFontSize, 10);
-    fontSizeDisplay.textContent = savedFontSize + "%";
-}
-updateFontSizeButtonsState();
-
-fontSizeDecrease.addEventListener("click", function () {
-    updateFontSize(currentFontSize - stepSize);
-});
-
-fontSizeIncrease.addEventListener("click", function () {
-    updateFontSize(currentFontSize + stepSize);
-});
-
-// Keep stored button IDs stable, but use real font families on each platform.
-var READER_FONTS = {
-    Yahei: "\"Microsoft YaHei\", \"PingFang SC\", \"Noto Sans CJK SC\", sans-serif",
-    SimSun: "\"SimSun\", \"Songti SC\", \"Noto Serif CJK SC\", serif",
-    KaiTi: "\"KaiTi\", \"Kaiti SC\", \"STKaiti\", cursive",
-    Arial: "Arial, sans-serif"
-};
-var PROTECTED_FONT_SELECTOR = "pre, code, kbd, samp, tt, math, svg";
-// Weak keys allow discarded chapter documents to be collected.
-var originalChapterFonts = new WeakMap();
-var forceFontCheckbox = document.getElementById("forceFontOverride");
-var forceFontHookRegistered = false;
-var currentForceFontValue = null; // the active font-family list, or null
-
-function forceFontStorageKey() {
-    return "calibre.reader.forceFont." + (window.calibre && window.calibre.bookUrl ? window.calibre.bookUrl : "");
-}
-
-function isForceFontEnabled() {
-    return localStorage.getItem(forceFontStorageKey()) === "true";
-}
-
-function applyForceFontToContents(contents, fontValue, force) {
-    var doc = contents.document;
-    var previous = originalChapterFonts.get(doc);
-    if (previous) {
-        previous.forEach(function (entry) {
-            if (entry.value) {
-                entry.element.style.setProperty("font-family", entry.value, entry.priority);
-            } else {
-                entry.element.style.removeProperty("font-family");
-            }
-        });
-        originalChapterFonts.delete(doc);
-    }
-    if (!fontValue || !doc.body) return;
-
-    var entries = [];
-    var protectedFonts = [];
-    var elements = force
-        ? [doc.body].concat(Array.from(doc.body.querySelectorAll("*"))) : [doc.body];
-    // Capture inherited fonts before changing any ancestor. Protect descendants too.
-    elements.forEach(function (element) {
-        entries.push({
-            element: element,
-            value: element.style.getPropertyValue("font-family"),
-            priority: element.style.getPropertyPriority("font-family")
-        });
-        protectedFonts.push(force && element.closest(PROTECTED_FONT_SELECTOR)
-            ? doc.defaultView.getComputedStyle(element).fontFamily : null);
-    });
-    originalChapterFonts.set(doc, entries);
-    elements.forEach(function (element, index) {
-        element.style.setProperty("font-family", protectedFonts[index] || fontValue, "important");
-    });
-}
-
-// Own the reversible font override in both modes. Removing an epub.js body
-// override would also remove a font-family originally supplied inline by the book.
-function updateReaderFont() {
-    if (!reader || !reader.rendition) return;
-    ensureForceFontHook();
-    applyForceFontToAllCurrentContents(currentForceFontValue);
-}
-
-function applyForceFontToAllCurrentContents(fontValue) {
-    if (!reader || !reader.rendition) return;
-    reader.rendition.getContents().forEach(function (contents) {
-        applyForceFontToContents(contents, fontValue, isForceFontEnabled());
-    });
-}
-
-function ensureForceFontHook() {
-    if (forceFontHookRegistered) return;
-    if (!reader || !reader.rendition || !reader.rendition.hooks || !reader.rendition.hooks.content) return;
-    // Re-applies the current override to every newly rendered chapter
-    // (page turns load a fresh iframe), the same hook epub.js's own Themes
-    // implementation uses to persist registered themes/overrides.
-    reader.rendition.hooks.content.register(function (contents) {
-        if (currentForceFontValue) {
-            applyForceFontToContents(contents, currentForceFontValue, isForceFontEnabled());
-        }
-    });
-    forceFontHookRegistered = true;
-}
-
-function setForceFontControlState(disabled, checked) {
-    if (!forceFontCheckbox) return;
-    forceFontCheckbox.disabled = disabled;
-    forceFontCheckbox.checked = checked;
-}
-
-// Until a non-"default" font is actually selected (below), there is nothing
-// to force - keep the control off and unavailable.
-setForceFontControlState(true, false);
-
-if (forceFontCheckbox) {
-    forceFontCheckbox.addEventListener("change", function () {
-        localStorage.setItem(forceFontStorageKey(), String(forceFontCheckbox.checked));
-        updateReaderFont();
-    });
-}
-
-window.selectFont = function (id) {
-    if (id !== "default" && !Object.prototype.hasOwnProperty.call(READER_FONTS, id)) {
-        id = "default";
-    }
-
-    var fontContainer = document.getElementById("font");
-    var buttons = fontContainer.querySelectorAll("button[aria-pressed]");
-    buttons.forEach(function (btn) {
-        btn.setAttribute("aria-pressed", "false");
-    });
-
-    var spans = fontContainer.querySelectorAll(".tick");
-    for (var i = 0; i < spans.length; i++) {
-        spans[i].textContent = "";
-    }
-    var target = document.getElementById(id);
-    target.setAttribute("aria-pressed", "true");
-    target.querySelector("span").textContent = "✓";
-
-    // Save font selection to localStorage
-    localStorage.setItem("calibre.reader.font", id);
-
-    currentForceFontValue = id === "default" ? null : READER_FONTS[id];
-    setForceFontControlState(id === "default", id !== "default" && isForceFontEnabled());
-    updateReaderFont();
-};
-
 function spread(id) {
-    var layoutContainer = document.getElementById("layout");
-    var buttons = layoutContainer.querySelectorAll("button[aria-pressed]");
-    buttons.forEach(function (btn) {
-        btn.setAttribute("aria-pressed", "false");
-    });
-
-    var spans = layoutContainer.querySelectorAll(".tick");
-    for (var i = 0; i < spans.length; i++) {
-        spans[i].textContent = "";
-    }
-    var target = document.getElementById(id);
-    target.setAttribute("aria-pressed", "true");
-    target.querySelector("span").textContent = "✓";
-
-    reader.rendition.spread(id === "spread" ? true : "none");
+    ReaderPreferences.set({spread: id === "spread" ? "auto" : "none"});
 }
 
-// Pages counter visibility setting
-(function () {
-    var checkbox = document.getElementById("showPagesCount");
-    var pagesEl = document.getElementById("pages-count");
-    var key = "calibre.reader.showPages";
-    var saved = localStorage.getItem(key);
-    var show = saved === null ? true : saved === "true";
-    if (checkbox) checkbox.checked = show;
-    if (pagesEl) pagesEl.style.display = show ? "" : "none";
-    if (checkbox) {
-        checkbox.addEventListener("change", function () {
-            var val = checkbox.checked;
-            localStorage.setItem(key, String(val));
-            var target = document.getElementById("pages-count");
-            if (target) target.style.visibility = val ? "visible" : "hidden";
-        });
-    }
-})();
-
-// Custom theme color picker (Pickr)
-(function () {
-    var swatch = document.getElementById("customThemeSwatch");
-    var saved =
-        window.themes && window.themes.customTheme && window.themes.customTheme.bgColor
-            ? window.themes.customTheme.bgColor
-            : "#ffffff";
-    if (swatch) swatch.style.background = saved;
-
-    function _hexToRgb(hex) {
-        hex = hex.replace("#", "");
-        if (hex.length === 3) {
-            hex = hex
-                .split("")
-                .map(function (h) {
-                    return h + h;
-                })
-                .join("");
-        }
-        var bigint = parseInt(hex, 16);
-        return {
-            r: (bigint >> 16) & 255,
-            g: (bigint >> 8) & 255,
-            b: bigint & 255,
-        };
-    }
-
-    // Better contrast decision using WCAG relative luminance and contrast ratio
-    // Returns true if black text is the better choice (i.e. background is light)
-    function _isLight(hex) {
-        try {
-            var rgb = _hexToRgb(hex);
-            var srgb = { r: rgb.r / 255, g: rgb.g / 255, b: rgb.b / 255 };
-            function lin(c) {
-                return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-            }
-            var R = lin(srgb.r),
-                G = lin(srgb.g),
-                B = lin(srgb.b);
-            var L = 0.2126 * R + 0.7152 * G + 0.0722 * B; // relative luminance
-
-            var contrastWithBlack = (L + 0.05) / (0.0 + 0.05);
-            var contrastWithWhite = (1.0 + 0.05) / (L + 0.05);
-
-            return contrastWithBlack >= contrastWithWhite;
-        } catch (e) {
-            return true;
-        }
-    }
-
-    function applyCustomColor(hex) {
-        if (!hex) return;
-        if (hex[0] !== "#") hex = "#" + hex;
-        window.themes.customTheme.bgColor = hex;
-        try {
-            localStorage.setItem("calibre.reader.customTheme", hex);
-        } catch (e) {}
-        if (swatch) swatch.style.background = hex;
-
-        try {
-            localStorage.setItem("calibre.reader.theme", "customTheme");
-        } catch (e) {}
-
-        var tickSpans = document.getElementById("themes").querySelectorAll(".tick");
-        tickSpans.forEach(function (ts) {
-            ts.textContent = "";
-        });
-        var themeButtons = document.getElementById("themes").querySelectorAll("button[aria-pressed]");
-        themeButtons.forEach(function (btn) {
-            btn.setAttribute("aria-pressed", "false");
-        });
-        var customTick = document.getElementById("customSelected");
-        if (customTick) customTick.textContent = "✓";
-
-        var titleColor = _isLight(hex) ? "#000000" : "#ffffff";
-        try {
-            document.getElementById("main").style.backgroundColor = hex;
-            document.getElementById("titlebar").style.color = titleColor;
-            document.getElementById("progress").style.color = titleColor;
-        } catch (e) {}
-
-        try {
-            window.themes.customTheme["title-color"] = titleColor;
-        } catch (e) {}
-
-        try {
-            if (reader && reader.rendition && reader.rendition.themes) {
-                reader.rendition.themes.register("customTheme", {
-                    body: { background: hex, color: titleColor },
-                });
-                reader.rendition.themes.select("customTheme");
-            }
-        } catch (e) {
-            console.error("Failed to apply custom theme to reader", e);
-        }
-    }
-
-    // Delay init until Pickr is available
-    function ensurePickrAndInit() {
-        if (window.Pickr) {
-            try {
-                var pickr = Pickr.create({
-                    el: "#customThemeSwatch",
-                    useAsButton: true,
-                    theme: "classic",
-                    default: saved,
-                    components: {
-                        preview: true,
-                        opacity: false,
-                        hue: true,
-                        interaction: {
-                            hex: true,
-                            input: true,
-                            save: true,
-                        },
-                    },
-                });
-
-                pickr.on("change", function (color) {
-                    try {
-                        var hex = color.toHEXA().toString();
-                        if (swatch) swatch.style.background = hex;
-                        applyCustomColor(hex);
-                    } catch (e) {}
-                });
-
-                pickr.on("save", function (color) {
-                    try {
-                        var hex = color.toHEXA().toString();
-                        if (swatch) swatch.style.background = hex;
-                        applyCustomColor(hex);
-                        pickr.hide();
-                    } catch (e) {}
-                });
-
-                if (swatch) {
-                    swatch.addEventListener("click", function () {
-                        pickr.show();
-                    });
-                    // The swatch is a role="button" span, not a native button/link,
-                    // so it needs an explicit keyboard activation handler.
-                    swatch.addEventListener("keydown", function (e) {
-                        if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            pickr.show();
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error("Pickr init failed", e);
-            }
-            return;
-        }
-        setTimeout(ensurePickrAndInit, 150);
-    }
-
-    ensurePickrAndInit();
-})();
-
-// Settings modal: Escape-to-close and focus management.
-//
-// The modal's open/close mechanism itself lives in the third-party
-// reader.min.js bundle (click #setting -> add "md-show"; click .closer or
-// .overlay -> remove "md-show"). Rather than touching that vendor file, we
-// observe the "md-show" class - the single contract every close path already
-// converges on - and layer Escape-to-close plus focus handling on top of it.
-(function () {
+var ReaderSettings = (function () {
+    "use strict";
     var modal = document.getElementById("settings-modal");
     var trigger = document.getElementById("setting");
-    if (!modal || !trigger) return;
-
-    function isOpen() {
+    var picker = null;
+    var syncingPicker = false;
+    var last = null;
+    var attached = false;
+    var tabs = Array.from(modal.querySelectorAll("[role='tab']"));
+    var disclosures = document.getElementById("typographyOverrides");
+    function open() {
         return modal.classList.contains("md-show");
     }
-
-    function closeModal() {
+    function chooseTab(tab, focus) {
+        tabs.forEach(function (item) {
+            var selected = item === tab;
+            item.setAttribute("aria-selected", String(selected));
+            item.tabIndex = selected ? 0 : -1;
+            document.getElementById(item.getAttribute("aria-controls")).hidden = !selected;
+        });
+        if (focus) tab.focus();
+    }
+    tabs.forEach(function (tab) {
+        tab.addEventListener("click", function () {
+            chooseTab(tab, false);
+        });
+    });
+    function close() {
         modal.classList.remove("md-show");
     }
-
-    var wasOpen = isOpen();
-    var observer = new MutationObserver(function () {
-        var open = isOpen();
-        if (open && !wasOpen) {
-            modal.focus();
-        } else if (!open && wasOpen) {
-            trigger.focus();
+    // Capture before the vendor's document bubble listener, which ignores
+    // defaultPrevented. Native editing keys retain their default behavior.
+    function guardKeys(event) {
+        if (!open()) return;
+        if (event.key === "Escape") {
+            event.preventDefault(); event.stopImmediatePropagation(); close(); return;
         }
-        wasOpen = open;
-    });
-    observer.observe(modal, { attributes: true, attributeFilter: ["class"] });
-
-    document.addEventListener("keydown", function (e) {
-        if (e.key === "Escape" && isOpen()) {
-            closeModal();
+        if (event.key === "Tab") {
+            var focusable = Array.from(modal.querySelectorAll("button, input, summary, [tabindex='0']"))
+                .filter(function (element) {
+                    return !element.disabled && element.getClientRects().length;
+                });
+            var first = focusable[0], end = focusable[focusable.length - 1];
+            if (event.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+                event.preventDefault(); end.focus();
+            } else if (!event.shiftKey && (document.activeElement === end || !modal.contains(document.activeElement))) {
+                event.preventDefault(); first.focus();
+            }
+        }
+        var keys = ["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"];
+        if (keys.indexOf(event.key) === -1) return;
+        event.stopImmediatePropagation();
+        var index = tabs.indexOf(event.target);
+        if (index !== -1 && ["ArrowLeft", "ArrowRight", "Home", "End"].indexOf(event.key) !== -1) {
+            event.preventDefault();
+            var next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 :
+                (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+            chooseTab(tabs[next], true);
+        }
+    }
+    document.addEventListener("keydown", guardKeys, true);
+    var wasOpen = open();
+    new MutationObserver(function () {
+        var visible = open();
+        if (visible && !wasOpen) {
+            disclosures.open = false; chooseTab(tabs[0], true);
+        }
+        if (!visible && wasOpen) {
+            if (picker) picker.hide(); trigger.focus();
+        }
+        wasOpen = visible;
+    }).observe(modal, {attributes: true, attributeFilter: ["class"]});
+    modal.querySelector(".closer").addEventListener("click", close);
+    trigger.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault(); trigger.click();
         }
     });
 
-    // #setting and .closer are non-native, non-link/button elements
-    // (role="button"/tabindex="0" in the markup), so they need explicit
-    // keyboard activation handlers to be operable without a mouse.
-    trigger.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            trigger.click();
+    function mark(container, id) {
+        document.getElementById(container).querySelectorAll("button[aria-pressed]").forEach(function (button) {
+            var selected = button.id === id;
+            button.setAttribute("aria-pressed", String(selected));
+            var tick = button.querySelector(".tick");
+            if (tick) tick.textContent = selected ? "✓" : "";
+        });
+    }
+    function contrast(hex) {
+        var rgb = [1, 3, 5].map(function (offset) {
+            var c = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+            return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        var luminance = (0.2126 * rgb[0]) + (0.7152 * rgb[1]) + (0.0722 * rgb[2]);
+        return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#ffffff";
+    }
+    function applyTheme(state) {
+        var config = window.themes[state.theme];
+        if (state.theme === "customTheme") {
+            config.bgColor = state.customTheme;
+            config["title-color"] = contrast(state.customTheme);
+            reader.rendition.themes.register("customTheme", {body: {background: config.bgColor, color: config["title-color"]}});
         }
+        reader.rendition.themes.select(state.theme);
+        document.getElementById("main").style.backgroundColor = config.bgColor;
+        document.getElementById("titlebar").style.color = config["title-color"];
+        document.getElementById("progress").style.color = config["title-color"];
+    }
+    function applySidebar(state) {
+        reader.settings.sidebarReflow = state.sidebarReflow;
+        // Keep the currently open sidebar's geometry in sync with the preference.
+        var main = document.getElementById("main");
+        main.classList.toggle("single", !!reader.sidebarOpen && state.sidebarReflow);
+        main.classList.toggle("closed", !!reader.sidebarOpen && !state.sidebarReflow);
+        if (reader.rendition.location) reader.rendition.resize();
+    }
+    function render(state) {
+        document.getElementById("readerSettingsStatus").textContent = "";
+        mark("font", state.font);
+        mark("themes", state.theme);
+        mark("layout", state.spread === "none" ? "nonespread" : "spread");
+        document.getElementById("customSelected").textContent = state.theme === "customTheme" ? "✓" : "";
+        document.getElementById("fontSizeDisplay").textContent = state.fontSize + "%";
+        document.getElementById("fontSizeDecrease").disabled = state.fontSize <= 50;
+        document.getElementById("fontSizeIncrease").disabled = state.fontSize >= 300;
+        document.getElementById("forceFontOverride").disabled = state.font === "default";
+        document.getElementById("forceFontOverride").checked = state.font !== "default" && state.forceFont;
+        document.getElementById("showPagesCount").checked = state.showPages;
+        document.getElementById("pages-count").style.display = state.showPages ? "" : "none";
+        document.getElementById("sidebarReflow").checked = state.sidebarReflow;
+        document.getElementById("customThemeSwatch").style.backgroundColor = state.customTheme;
+        document.getElementById("readerStorageStatus").hidden = !ReaderPreferences.failed();
+        if (picker && (!last || last.customTheme !== state.customTheme)) {
+            syncingPicker = true;
+            picker.setColor(state.customTheme, true);
+            syncingPicker = false;
+        }
+        if (!attached) return;
+        if (!last || state.theme !== last.theme || state.customTheme !== last.customTheme) applyTheme(state);
+        if (!last || state.fontSize !== last.fontSize) reader.rendition.themes.fontSize(state.fontSize + "%");
+        if (!last || state.spread !== last.spread) reader.rendition.spread(state.spread);
+        if (!last || state.sidebarReflow !== last.sidebarReflow) applySidebar(state);
+        last = state;
+        badge();
+    }
+    function badge() {
+        document.getElementById("overridesActive").hidden = !document.getElementById("forceFontOverride").checked &&
+            !document.getElementById("forceSpacingOverride").checked;
+    }
+    document.addEventListener("reader-spacing-state", badge);
+    [["fontSizeDecrease", -5], ["fontSizeIncrease", 5]].forEach(function (pair) {
+        document.getElementById(pair[0]).addEventListener("click", function () {
+            ReaderPreferences.set({fontSize: Math.max(50, Math.min(300, ReaderPreferences.get().fontSize + pair[1]))});
+        });
     });
-
-    var closer = modal.querySelector(".closer");
-    if (closer) {
-        closer.addEventListener("keydown", function (e) {
-            if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                closeModal();
+    document.getElementById("forceFontOverride").addEventListener("change", function (event) {
+        ReaderPreferences.set({forceFont: event.target.checked});
+    });
+    document.getElementById("showPagesCount").addEventListener("change", function (event) {
+        ReaderPreferences.set({showPages: event.target.checked});
+    });
+    // The vendor binds a click toggler later. Capture prevents a double toggle.
+    document.getElementById("sidebarReflow").addEventListener("click", function (event) {
+        event.stopImmediatePropagation();
+        ReaderPreferences.set({sidebarReflow: event.target.checked});
+    }, true);
+    document.getElementById("resetBookSettings").addEventListener("click", function () {
+        ReaderPreferences.reset();
+        document.getElementById("readerSettingsStatus").textContent = modal.dataset.resetDone;
+    });
+    if (window.Pickr) {
+        picker = Pickr.create({el: "#customThemeSwatch", useAsButton: true, theme: "classic",
+            default: ReaderPreferences.get().customTheme,
+            components: {preview: true, opacity: false, hue: true, interaction: {hex: true, input: true, save: true}}});
+        function colorChanged(color) {
+            if (!syncingPicker && color) ReaderPreferences.set({customTheme: color.toHEXA().toString(), theme: "customTheme"});
+        }
+        picker.on("change", colorChanged);
+        picker.on("save", function (color) {
+            colorChanged(color); picker.hide();
+        });
+        document.getElementById("customThemeSwatch").addEventListener("keydown", function (event) {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault(); picker.show();
             }
         });
     }
+    ReaderPreferences.subscribe(render);
+    render(ReaderPreferences.get());
+    return {attach: function () {
+        attached = true;
+        // A chapter has its own document; capture guards its keys before epub.js
+        // forwards them to the vendor's rendition arrow handler.
+        reader.rendition.hooks.content.register(function (contents) {
+            contents.document.addEventListener("keydown", guardKeys, true);
+        });
+        render(ReaderPreferences.get());
+    }};
 })();
