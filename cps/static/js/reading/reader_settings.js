@@ -1,4 +1,4 @@
-/* global reader, Pickr, ReaderPreferences */
+/* global reader, Pickr, ReaderPreferences, ReaderFonts */
 /* exported selectTheme, selectFont, spread, ReaderSettings */
 
 function selectTheme(id) {
@@ -97,6 +97,33 @@ var ReaderSettings = (function () {
             var tick = button.querySelector(".tick");
             if (tick) tick.textContent = selected ? "✓" : "";
         });
+    }
+    // Renders the "saved selection" (state.font), not "currently effective font" -
+    // ReaderSpacing separately reports load failures via #fontStatus so an
+    // unavailable server font is never silently rewritten to "default" here.
+    function buildServerFonts(catalog) {
+        var group = document.getElementById("serverFontGroup");
+        var container = document.getElementById("serverFontButtons");
+        var familyIds = Object.keys(catalog.families);
+        container.innerHTML = "";
+        familyIds.forEach(function (familyId) {
+            var family = catalog.families[familyId];
+            var button = document.createElement("button");
+            button.type = "button";
+            button.id = "server:" + familyId;
+            button.setAttribute("aria-pressed", "false");
+            button.addEventListener("click", function () {
+                selectFont(button.id);
+            });
+            var tick = document.createElement("span");
+            tick.className = "tick";
+            tick.setAttribute("aria-hidden", "true");
+            button.appendChild(tick);
+            button.appendChild(document.createTextNode(family.name));
+            container.appendChild(button);
+        });
+        group.hidden = familyIds.length === 0;
+        mark("font", ReaderPreferences.get().font);
     }
     function contrast(hex) {
         var rgb = [1, 3, 5].map(function (offset) {
@@ -209,6 +236,7 @@ var ReaderSettings = (function () {
     }
     ReaderPreferences.subscribe(render);
     render(ReaderPreferences.get());
+    ReaderFonts.subscribeCatalog(buildServerFonts);
     return {attach: function () {
         attached = true;
         // A chapter has its own document; capture guards its keys before epub.js

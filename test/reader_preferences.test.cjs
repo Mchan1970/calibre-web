@@ -30,7 +30,7 @@ test('legacy import, complete snapshot, book isolation and reset persist without
     assert.equal(prefs.get().sidebarReflow, true); assert.equal(prefs.get().letterSpacing, 0);
     prefs.set({font: 'Arial', spread: 'none'});
     assert.equal(load('/a', store).prefs.get().spread, 'none');
-    assert.equal(load('/b', store).prefs.get().font, 'KaiTi');
+    assert.equal(load('/b', store).prefs.get().font, 'builtin:KaiTi');
     prefs.reset(); const reopened = load('/a', store).prefs.get();
     assert.equal(reopened.theme, 'lightTheme'); assert.equal(reopened.fontSize, 100);
     assert.equal(reopened.forceSpacing, false); assert.equal(reopened.sidebarReflow, false);
@@ -58,14 +58,37 @@ test('corrupt snapshots never reimport legacy values, validation and denied stor
     }
     const {prefs} = load('/a', new Map(), true);
     prefs.set({font: 'Arial', lineHeight: 1.8, letterSpacing: 0, customTheme: 'url(evil)'});
-    assert.equal(prefs.get().font, 'Arial'); assert.equal(prefs.get().letterSpacing, 0);
+    assert.equal(prefs.get().font, 'builtin:Arial'); assert.equal(prefs.get().letterSpacing, 0);
     assert.equal(prefs.get().customTheme, '#ffffff'); assert.equal(prefs.failed(), true);
 });
-function spacingHarness() {
+test('font namespace: legacy bare values migrate, server ids are format-checked without a catalog, junk falls back', () => {
+    const {prefs} = load('/a');
+    assert.equal(prefs.get().font, 'default');
+    prefs.set({font: 'builtin:SimSun'}); assert.equal(prefs.get().font, 'builtin:SimSun');
+    prefs.set({font: 'server:source-han-serif-sc'}); assert.equal(prefs.get().font, 'server:source-han-serif-sc');
+    prefs.set({font: 'server:Not-Valid'}); assert.equal(prefs.get().font, 'default');
+    prefs.set({font: 'server:'}); assert.equal(prefs.get().font, 'default');
+    prefs.set({font: 'builtin:NotARealFont'}); assert.equal(prefs.get().font, 'default');
+    prefs.set({font: '__proto__'}); assert.equal(prefs.get().font, 'default');
+});
+function fontLoaderMock() {
+    const pending = [], history = [];
+    return {
+        history,
+        ensure(doc, fontId, onDone) { const call = {doc, fontId, onDone}; pending.push(call); history.push(call); },
+        cssFamily(fontId) { return 'cw-server-' + fontId; },
+        fallbackFor() { return 'serif'; },
+        subscribeCatalog() {},
+        flush(status = 'ready') {
+            const batch = pending.splice(0); batch.forEach(p => p.onDone(status));
+        }
+    };
+}
+function spacingHarness(options = {}) {
     const loaded = load('/a');
     const nodes = new Map(), hooks = [], events = {}, frames = new Map(); let next = 0;
-    function node() { return {dataset: {original: 'Original', reflowable: 'ready', pending: 'loading', fixed: 'fixed'},
-        addEventListener(type, cb) { this[type] = cb; }}; }
+    function node() { return {dataset: {original: 'Original', reflowable: 'ready', pending: 'loading', fixed: 'fixed',
+        fontUnavailable: 'Font unavailable'}, addEventListener(type, cb) { this[type] = cb; }}; }
     const document = {getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
         addEventListener() {}, dispatchEvent() {}};
     function element(value, protectedElement = false) {
@@ -78,7 +101,8 @@ function spacingHarness() {
     function chapter() {
         const p = element('1.1'), code = element('1.2', true), body = element('1.3');
         body.querySelectorAll = () => [p, code];
-        const doc = {body, addEventListener() {}, defaultView: {getComputedStyle(el) { return {getPropertyValue(k) { return el.style.getPropertyValue(k) || 'normal'; }}; }}};
+        const doc = {body, addEventListener() {}, fonts: {add() {}},
+            defaultView: {FontFace: options.FontFace, getComputedStyle(el) { return {getPropertyValue(k) { return el.style.getPropertyValue(k) || 'normal'; }}; }}};
         return {document: doc, sectionIndex: 0, p, code};
     }
     const first = chapter(); let contents = [first], layout = 'reflowable';
@@ -88,9 +112,18 @@ function spacingHarness() {
             getContents() { return contents; }, on(name,cb) { events[name] = cb; }, hooks: {content: {register(cb) { hooks.push(cb); }}}}};
     Object.assign(loaded.context, {reader, document, WeakMap, Event: function() {},
         requestAnimationFrame(cb) { frames.set(++next,cb); return next; }, cancelAnimationFrame(id) { frames.delete(id); }});
+    let fontLoader;
+    if (options.realFontLoader) {
+        Object.assign(loaded.context, {fetch: options.fetch, setTimeout, clearTimeout});
+        vm.runInContext(source('reader_fonts_client.js'), loaded.context);
+        fontLoader = loaded.context.ReaderFonts;
+    } else {
+        fontLoader = fontLoaderMock();
+        loaded.context.ReaderFonts = fontLoader;
+    }
     vm.runInContext(source('reader_spacing.js'), loaded.context);
     loaded.context.ReaderSpacing.init();
-    return {...loaded, first, hooks, nodes, events, frames, chapter,
+    return {...loaded, first, hooks, nodes, events, frames, chapter, fontLoader,
         setContents(value) { contents = value; }, fixed() { layout = 'pre-paginated'; }};
 }
 test('typography applies even with throwing currentLocation; latest of 100 rapid updates wins', () => {
@@ -138,4 +171,73 @@ test('layout notifications only inspect state and do not re-enter the layout mut
     h.events.layout();
     assert.equal(h.first.p.style.getPropertyValue('line-height'), '1.6');
     assert.equal(h.nodes.get('forceSpacingOverride').disabled, false);
+});
+test('server font stays deferred (root untouched) until ReaderFonts confirms ready, then commits', () => {
+    const h = spacingHarness();
+    h.prefs.set({font: 'server:test-sans'});
+    assert.equal(h.first.document.body.style.getPropertyValue('font-family'), '');
+    assert.equal(h.fontLoader.history.length, 1);
+    // ReaderFonts' catalog is keyed by the bare family id, not the "server:"
+    // namespaced preference value - this call must pass the stripped id.
+    assert.equal(h.fontLoader.history[0].fontId, 'test-sans');
+    h.fontLoader.flush('ready');
+    assert.equal(h.first.document.body.style.getPropertyValue('font-family'), '"cw-server-test-sans", serif');
+    assert.equal(h.first.p.style.getPropertyValue('font-family'), ''); // non-forced: root only, no descendants
+});
+test('rapid font switching only lets the latest generation commit; a stale ready result is ignored', () => {
+    const h = spacingHarness();
+    h.prefs.set({font: 'server:font-a'});
+    h.prefs.set({font: 'server:font-b'});
+    assert.equal(h.fontLoader.history.length, 2);
+    h.fontLoader.flush('ready'); // resolves both A (stale) and B (current) in one pass
+    assert.equal(h.first.document.body.style.getPropertyValue('font-family'), '"cw-server-font-b", serif');
+});
+test('failed or timed-out server font load reports status once and does not retry the same target', () => {
+    const h = spacingHarness();
+    h.prefs.set({font: 'server:missing'});
+    h.fontLoader.flush('failed');
+    assert.equal(h.nodes.get('fontStatus').textContent, 'Font unavailable');
+    assert.equal(h.first.document.body.style.getPropertyValue('font-family'), '');
+    h.prefs.set({fontSize: 110}); // unrelated change must not re-trigger ensure() for the same failed target
+    assert.equal(h.fontLoader.history.length, 1);
+});
+test('a new chapter must independently prepare a server font already ready in another chapter', () => {
+    const h = spacingHarness();
+    h.prefs.set({font: 'server:test-sans'});
+    h.fontLoader.flush('ready');
+    assert.equal(h.first.document.body.style.getPropertyValue('font-family'), '"cw-server-test-sans", serif');
+    const second = h.chapter();
+    h.setContents([h.first, second]);
+    h.hooks.forEach(fn => fn(second));
+    assert.equal(second.document.body.style.getPropertyValue('font-family'), '');
+    assert.equal(h.fontLoader.history.length, 2);
+    h.fontLoader.flush('ready');
+    assert.equal(second.document.body.style.getPropertyValue('font-family'), '"cw-server-test-sans", serif');
+});
+test('integration: real ReaderFonts client resolves a server font keyed by bare id, as the backend returns it', async () => {
+    // Regression test for a real bug: reader_spacing.js once passed the full
+    // "server:<id>" preference value into ReaderFonts.ensure(), but the catalog
+    // (like the real /reader/fonts response) is keyed by the bare family id.
+    // fontLoaderMock() above is too permissive to catch that mismatch, so this
+    // test loads the actual reader_fonts_client.js instead of a mock.
+    const fetchCalls = [];
+    function FakeFontFace(family, src, descriptors) {
+        this.family = family; this.src = src; this.descriptors = descriptors; this.status = 'unloaded';
+    }
+    FakeFontFace.prototype.load = function () { this.status = 'loaded'; return Promise.resolve(this); };
+    const h = spacingHarness({
+        realFontLoader: true,
+        FontFace: FakeFontFace,
+        fetch(url) {
+            fetchCalls.push(url);
+            return Promise.resolve({ok: true, json: () => Promise.resolve({
+                version: 1, revision: 'abc123', fonts: [{id: 'cangerjinkai', name: '仓耳今楷', fallback: 'serif',
+                    faces: [{id: 'w03', weight: 400, style: 'normal', url: '/reader/fonts/cangerjinkai/w03?v=abc123'}]}]
+            })});
+        }
+    });
+    h.prefs.set({font: 'server:cangerjinkai'});
+    for (let i = 0; i < 4; i++) await new Promise(r => setTimeout(r, 0));
+    assert.equal(fetchCalls[0], '/reader/fonts');
+    assert.equal(h.first.document.body.style.getPropertyValue('font-family'), '"cw-server-cangerjinkai", serif');
 });

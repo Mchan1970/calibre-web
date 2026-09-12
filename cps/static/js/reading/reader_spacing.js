@@ -1,7 +1,10 @@
-/* global reader, ReaderPreferences */
+/* global reader, ReaderPreferences, ReaderFonts */
 /* exported ReaderSpacing */
 
-// Shared, reversible typography overrides for chapter documents.
+// Shared, reversible typography overrides for chapter documents. This is also
+// the exclusive owner of server-font readiness per chapter document: it decides
+// which font id is actually safe to render right now, and only ever hands
+// ReaderFonts a resource-loading job - never the other way around.
 var ReaderSpacing = (function () {
     "use strict";
     var originals = new WeakMap();
@@ -21,11 +24,79 @@ var ReaderSpacing = (function () {
     var status = document.getElementById("spacingStatus");
 
     var fonts = {
-        Yahei: "\"Microsoft YaHei\", \"PingFang SC\", \"Noto Sans CJK SC\", sans-serif",
-        SimSun: "\"SimSun\", \"Songti SC\", \"Noto Serif CJK SC\", serif",
-        KaiTi: "\"KaiTi\", \"Kaiti SC\", \"STKaiti\", cursive",
-        Arial: "Arial, sans-serif"
+        "builtin:Yahei": "\"Microsoft YaHei\", \"PingFang SC\", \"Noto Sans CJK SC\", sans-serif",
+        "builtin:SimSun": "\"SimSun\", \"Songti SC\", \"Noto Serif CJK SC\", serif",
+        "builtin:KaiTi": "\"KaiTi\", \"Kaiti SC\", \"STKaiti\", cursive",
+        "builtin:Arial": "Arial, sans-serif"
     };
+    var SERVER_FONT_PREFIX = "server:";
+    var fontSection = document.getElementById("font");
+    var fontStatus = document.getElementById("fontStatus");
+    // Per chapter document: the font id that is actually safe to render right now.
+    var readyFontByDoc = new WeakMap();
+    // Per chapter document: the (fontId, generation) currently being prepared or
+    // already settled, so repeated apply() calls don't re-enter ReaderFonts.ensure()
+    // or re-report a failure that was already shown once.
+    var fontAttemptByDoc = new WeakMap();
+    var fontGeneration = 0;
+    var lastFontTarget = null;
+
+    function isServerFont(fontId) {
+        return typeof fontId === "string" && fontId.indexOf(SERVER_FONT_PREFIX) === 0;
+    }
+
+    function reportFontUnavailable() {
+        if (fontStatus) fontStatus.textContent = fontSection ? fontSection.dataset.fontUnavailable : "";
+    }
+
+    function clearFontStatus() {
+        if (fontStatus) fontStatus.textContent = "";
+    }
+
+    function ensureFontForDoc(doc, fontId) {
+        var attempt = fontAttemptByDoc.get(doc);
+        if (attempt && attempt.fontId === fontId && attempt.generation === fontGeneration) return;
+        var generationAtStart = fontGeneration;
+        var record = {fontId: fontId, generation: generationAtStart};
+        fontAttemptByDoc.set(doc, record);
+        clearFontStatus();
+        // ReaderFonts' catalog is keyed by the bare family id (matching the
+        // backend manifest), not the "server:" namespaced preference value.
+        ReaderFonts.ensure(doc, fontId.slice(SERVER_FONT_PREFIX.length), function (loadStatus) {
+            // A newer selection or a newer attempt on this doc has since started;
+            // this result is stale and must not touch runtime font, UI or position.
+            if (generationAtStart !== fontGeneration || fontAttemptByDoc.get(doc) !== record) return;
+            if (loadStatus === "ready") {
+                readyFontByDoc.set(doc, fontId);
+                schedule();
+            } else {
+                reportFontUnavailable();
+            }
+        });
+    }
+
+    // Returns the font id that is safe to render in doc right now, kicking off
+    // async preparation in the background if the target hasn't loaded yet there.
+    function resolveActualFont(doc, targetFontId) {
+        if (!isServerFont(targetFontId)) {
+            readyFontByDoc.set(doc, targetFontId);
+            return targetFontId;
+        }
+        var ready = readyFontByDoc.get(doc);
+        if (ready === targetFontId) return ready;
+        ensureFontForDoc(doc, targetFontId);
+        return ready || "default";
+    }
+
+    function fontFamilyFor(fontId) {
+        if (fontId === "default" || !fontId) return null;
+        if (isServerFont(fontId)) {
+            var familyId = fontId.slice(SERVER_FONT_PREFIX.length);
+            return "\"" + ReaderFonts.cssFamily(familyId) + "\", " + ReaderFonts.fallbackFor(familyId);
+        }
+        return fonts[fontId] || null;
+    }
+
     function readState() {
         var prefs = ReaderPreferences.get();
         state.lineHeight = prefs.lineHeight;
@@ -104,8 +175,9 @@ var ReaderSpacing = (function () {
         readState();
         var prefs = ReaderPreferences.get();
         var rules = [];
-        if (prefs.font !== "default") {
-            rules.push({property: "font-family", value: fonts[prefs.font], force: prefs.forceFont});
+        var familyValue = fontFamilyFor(resolveActualFont(doc, prefs.font));
+        if (familyValue) {
+            rules.push({property: "font-family", value: familyValue, force: prefs.forceFont});
         }
         if (eligible(contents)) {
             Object.keys(specs).forEach(function (key) {
@@ -267,7 +339,14 @@ var ReaderSpacing = (function () {
         // Layout notifications can be raised inside apply/display. Do not
         // re-enter the typography pipeline or keep rescheduling position work.
         reader.rendition.on("layout", updateControls);
-        ReaderPreferences.subscribe(function () {
+        lastFontTarget = ReaderPreferences.get().font;
+        ReaderPreferences.subscribe(function (prefs) {
+            // A new font target invalidates in-flight/settled attempts so stale
+            // ensure() results can no longer touch runtime font, UI or position.
+            if (prefs.font !== lastFontTarget) {
+                fontGeneration++;
+                lastFontTarget = prefs.font;
+            }
             schedule();
         });
         reader.rendition.on("relocated", updateControls);

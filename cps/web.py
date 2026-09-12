@@ -25,7 +25,8 @@ import chardet  # dependency of requests
 import copy
 from importlib.metadata import metadata
 
-from flask import Blueprint, jsonify, request, redirect, send_from_directory, make_response, flash, abort, url_for
+from flask import Blueprint, jsonify, request, redirect, send_from_directory, send_file, make_response, flash, \
+    abort, url_for
 from flask import session as flask_session
 from flask_babel import gettext as _
 from flask_babel import get_locale
@@ -41,6 +42,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from . import constants, logger, isoLanguages, services, limiter
 from . import db, ub, config, app
 from . import calibre_db, kobo_sync_status
+from . import reader_fonts
 from .search import render_search_results, render_adv_search_results
 from .gdriveutils import getFileFromEbooksFolder, do_gdrive_download
 from .helper import check_valid_domain, check_email, check_username, \
@@ -1623,6 +1625,35 @@ def read_book(book_id, book_format):
         flash(_("Oops! Selected book is unavailable. File does not exist or is not accessible"),
               category="error")
         return redirect(url_for("web.index"))
+
+
+# ###################################EPUB reader server fonts############################################################
+
+
+@web.route("/reader/fonts")
+@login_required_if_no_ano
+@viewer_required
+def reader_fonts_catalog():
+    response = jsonify(reader_fonts.get_public_catalog())
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
+
+
+@web.route("/reader/fonts/<font_id>/<face_id>")
+@login_required_if_no_ano
+@viewer_required
+def reader_font_face(font_id, face_id):
+    face = reader_fonts.get_face(font_id, face_id, request.args.get('v'))
+    if face is None:
+        abort(404)
+    # download_name must not be the real on-disk filename: the manifest deliberately
+    # exposes face IDs instead of filenames, and send_file() would otherwise fall
+    # back to the real basename for the Content-Disposition header.
+    download_name = face_id + os.path.splitext(face.path)[1]
+    response = send_file(face.path, mimetype=face.mime, as_attachment=False, download_name=download_name,
+                          max_age=31536000, conditional=True)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @web.route("/book/<int:book_id>")

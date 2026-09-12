@@ -95,17 +95,25 @@
             </div>
             <div class="settings-panels">
                 <div role="tabpanel" id="settings-panel-text" aria-labelledby="settings-tab-text">
-            <section class="settings-section" id="font" aria-labelledby="font-heading">
+            <section class="settings-section" id="font" aria-labelledby="font-heading"
+                     data-server-fonts-label="{{_('Server fonts')}}"
+                     data-font-unavailable="{{_('Selected font is currently unavailable; using the book font instead.')}}">
                 <h4 class="settings-section__title" id="font-heading">{{_('Font')}}</h4>
                 <div class="settings-section__body settings-button-group">
                     <button type="button" id="default" aria-pressed="true" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true">✓</span>{{_('Default')}}</button>
-                    <button type="button" id="Yahei" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('Yahei')}}</button>
-                    <button type="button" id="SimSun" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('SimSun')}}</button>
-                    <button type="button" id="KaiTi" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('KaiTi')}}</button>
-                    <button type="button" id="Arial" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('Arial')}}</button>
+                    <button type="button" id="builtin:Yahei" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('Yahei')}}</button>
+                    <button type="button" id="builtin:SimSun" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('SimSun')}}</button>
+                    <button type="button" id="builtin:KaiTi" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('KaiTi')}}</button>
+                    <button type="button" id="builtin:Arial" aria-pressed="false" onclick="selectFont(this.id)"><span class="tick" aria-hidden="true"></span>{{_('Arial')}}</button>
+                </div>
+
+                <div id="serverFontGroup" hidden>
+                    <h4 class="settings-section__title" id="serverFontHeading">{{_('Server fonts')}}</h4>
+                    <div class="settings-section__body settings-button-group" id="serverFontButtons"></div>
                 </div>
 
                 <p class="settings-hint">{{_("Fonts must be available on your reading device; otherwise a fallback font is used.")}}</p>
+                <p class="settings-hint" id="fontStatus" role="status"></p>
             </section>
             <section class="settings-section fontSizeWrapper" aria-labelledby="font-size-heading">
                 <h4 class="settings-section__title" id="font-size-heading">{{ _('Font Size') }}</h4>
@@ -263,6 +271,7 @@
     </script>
     <script src="{{ url_for('static', filename='js/libs/pickr/pickr.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/reading/reader_preferences.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/reading/reader_fonts_client.js') }}"></script>
     <script src="{{ url_for('static', filename='js/reading/reader_spacing.js') }}"></script>
     <script src="{{ url_for('static', filename='js/reading/reader_settings.js') }}"></script>
     <script src="{{ url_for('static', filename='js/libs/screenfull.min.js') }}"></script>

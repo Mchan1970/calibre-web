@@ -37,6 +37,20 @@ var ReaderPreferences = (function () {
     function choice(value, values, fallback) {
         return values.indexOf(value) === -1 ? fallback : value;
     }
+    // Storage-layer font validation only checks syntax (namespace + id charset),
+    // not availability: the server catalog loads asynchronously, so a syntactically
+    // valid "server:<id>" must be preserved even before/after the catalog is known.
+    var BUILTIN_FONTS = ["Yahei", "SimSun", "KaiTi", "Arial"];
+    var BUILTIN_FONT_RE = /^builtin:(Yahei|SimSun|KaiTi|Arial)$/;
+    var SERVER_FONT_RE = /^server:[a-z0-9][a-z0-9._-]{0,63}$/;
+    function normalizeFont(value, fallback) {
+        if (value === "default") return value;
+        if (typeof value === "string") {
+            if (BUILTIN_FONTS.indexOf(value) !== -1) return "builtin:" + value;
+            if (BUILTIN_FONT_RE.test(value) || SERVER_FONT_RE.test(value)) return value;
+        }
+        return fallback;
+    }
     function stepped(value, min, max, unit, step, fallback) {
         if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
         var scaled = value * unit;
@@ -47,7 +61,7 @@ var ReaderPreferences = (function () {
     function normalize(value) {
         value = value || {};
         var result = Object.assign({}, defaults);
-        result.font = choice(value.font, ["default", "Yahei", "SimSun", "KaiTi", "Arial"], defaults.font);
+        result.font = normalizeFont(value.font, defaults.font);
         result.theme = choice(value.theme, ["lightTheme", "darkTheme", "sepiaTheme", "amberTheme", "blackTheme", "customTheme"], defaults.theme);
         result.spread = choice(value.spread, ["auto", "none"], defaults.spread);
         result.customTheme = typeof value.customTheme === "string" && /^#[0-9a-f]{6}$/i.test(value.customTheme)

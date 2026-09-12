@@ -25,6 +25,9 @@ vendor/
 *.log
 cps/cache
 
+# admin-provided reader font directory (runtime data, not source)
+/fonts/
+
 .idea/
 *.bak
 *.log.*
